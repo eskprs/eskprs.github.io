@@ -39,7 +39,7 @@ p{margin:0}
 
 /* Hero rig */
 .rig{position:relative;border:1px solid var(--line);background:linear-gradient(180deg,var(--panel) 0%, var(--bg) 100%);overflow:hidden}
-.rig canvas{display:block;width:100%;height:clamp(420px, 62vw, 620px);cursor:crosshair;touch-action:manipulation}
+.rig canvas{display:block;width:100%;height:clamp(420px, 62vw, 620px);cursor:crosshair;touch-action:pan-y;user-select:none;-webkit-user-select:none}
 .rig .name{position:absolute;left:clamp(16px,4vw,44px);top:clamp(20px,4vw,40px);pointer-events:none;max-width:calc(100% - 32px)}
 .rig h1{font-size:clamp(40px, 9vw, 112px);font-weight:900;letter-spacing:-.035em;line-height:.92;text-transform:uppercase}
 .rig h1 .outline{color:var(--hot);text-shadow:0 0 40px var(--hot-glow)}
@@ -170,7 +170,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 48px;display:flex;jus
   .rig canvas{height:600px}
   .hud.tr{position:static;text-align:left;padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px 16px}
   .hud.tr br{display:none}
-  .hint{bottom:auto;top:auto;display:none}
+  .hint{position:static;padding:12px 16px 0;line-height:1.6}
   .tab{padding:16px 16px}
 }
 @media (max-width:460px){.skills{grid-template-columns:1fr}.facts div{grid-template-columns:1fr;gap:2px}}
@@ -188,7 +188,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 48px;display:flex;jus
     <span class="live"><i></i>Rig online · Istanbul</span>
   </div>
 
-  <section class="rig" aria-label="Live inverted pendulum. Tap or click to push it.">
+  <section class="rig" aria-label="Interactive inverted pendulum. Drag the ball, poke it, or tap the rail to move the cart.">
     <canvas id="sim"></canvas>
     <div class="name">
       <p class="label" style="margin-bottom:14px"><span class="hot">●</span> Mechatronics Engineer</p>
@@ -199,9 +199,10 @@ footer{border-top:1px solid var(--line);padding-block:28px 48px;display:flex;jus
       θ <b id="th">+0.00°</b><br>
       ω <b id="om">+0.00 rad/s</b><br>
       x <b id="xx">+0.00 m</b><br>
-      <span style="opacity:.7">poles −2 −2 −3 −3</span>
+      <span style="opacity:.7">poles −2 −2 −3 −3</span><br>
+      <span id="score" class="hot">0 caught · 0 dropped</span>
     </div>
-    <p class="hint">Click left or right of the cart to <b>push it</b>. The controller catches it.</p>
+    <p class="hint"><b>Drag the ball</b> to tilt it · <b>tap</b> anywhere to poke it · <b>tap the rail</b> to move the cart</p>
     <i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i>
   </section>
 
@@ -413,85 +414,152 @@ document.getElementById('copy').addEventListener('click',e=>{
 
 show((location.hash||'').slice(1)||'about',false);
 
-/* ---------- Inverted pendulum rig ---------- */
+/* ---------- Inverted pendulum rig (interactive) ---------- */
 (()=>{
   const cv=document.getElementById('sim'), ctx=cv.getContext('2d');
   const g=9.81,L=1;
-  // u = aθ + bω + cx + dv → closed-loop poles at −2, −2, −3, −3
+  // u = aθ + bω + c(x − x_ref) + dv → closed-loop poles at −2, −2, −3, −3
   const a=50.48,b=16.12,c=3.67,d=6.12;
-  let s={x:0.6,v:0,th:0.32,w:0};
-  const trail=[], hist=[];
-  let W=0,H=0,dpr=1,flash=0,flashX=0;
+  let s={x:0.6,v:0,th:0.32,w:0}, xref=0;
+  const trail=[], hist=[], phase=[];
+  let W=0,H=0,dpr=1, flash=0, flashX=0, flashY=0;
+  let drag=null, hover=false, lastUser=-1e9, caught=0, dropped=0, watching=false, dropFlash=0;
+  const $=id=>document.getElementById(id);
+
   function resize(){dpr=Math.min(2,devicePixelRatio||1);W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);if(reduce)settle();}
+  const geom=()=>{const wide=W>760;const sc=wide?W*0.055:W*0.14;const ty=H*(wide?0.80:0.78);const len=Math.min(H*0.42, wide?260:200);const cx0=wide?W*0.75:W*0.5;return{sc,ty,len,cx0,wide}};
+  const xMin=()=>{const {sc,cx0}=geom();return Math.max(-3.5,(40-cx0)/sc)}, xMax=()=>{const {sc,cx0}=geom();return Math.min(3.5,(W-40-cx0)/sc)};
+  const cartX=()=>{const {sc,cx0}=geom();return cx0+Math.max(-4,Math.min(4,s.x))*sc};
+  const bobXY=()=>{const {ty,len}=geom(),cx=cartX();return[cx+Math.sin(s.th)*len, ty-Math.cos(s.th)*len]};
+
   function step(dt){
-    const u=Math.max(-45,Math.min(45,a*s.th+b*s.w+c*s.x+d*s.v));
+    if(drag){ s.v*=0.9; s.x+=s.v*dt; return; }
+    const u=Math.max(-45,Math.min(45,a*s.th+b*s.w+c*(s.x-xref)+d*s.v));
     const al=(g*Math.sin(s.th)-u*Math.cos(s.th))/L;
     s.v+=u*dt; s.x+=s.v*dt; s.w+=al*dt; s.th+=s.w*dt;
-    if(Math.abs(s.th)>1.25||Math.abs(s.x)>6){s={x:0,v:0,th:.25,w:0}}
+    if(Math.abs(s.th)>1.25||Math.abs(s.x)>7){
+      if(watching){dropped++;watching=false;}
+      dropFlash=1; s={x:xref,v:0,th:0.18,w:0};
+    }
   }
-  const geom=()=>{const wide=W>760;const sc=wide?W*0.055:W*0.14;const ty=H*(wide?0.80:0.78);const len=Math.min(H*0.42, wide?260:200);const cx0=wide?W*0.75:W*0.5;return{sc,ty,len,cx0}};
+  function record(){hist.push(s.th);if(hist.length>300)hist.shift();phase.push([s.th,s.w]);if(phase.length>160)phase.shift();}
+  function checkCaught(){ if(watching&&!drag&&Math.abs(s.th)<0.01&&Math.abs(s.w)<0.05){caught++;watching=false;} }
+
   function draw(){
-    const {sc,ty,len,cx0}=geom();
+    const {sc,ty,len,cx0,wide}=geom();
     ctx.clearRect(0,0,W,H);
-    // grid
     ctx.strokeStyle='rgba(28,42,66,.7)';ctx.lineWidth=1;
     for(let gx=(cx0%40);gx<W;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
     for(let gy=ty%40;gy<H;gy+=40){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
-    const cx=cx0+Math.max(-3.5,Math.min(3.5,s.x))*sc;
-    // θ(t) trace along the bottom band
-    const base=ty+ (H-ty)*0.55;
+    const cx=cartX();
+    // θ(t) trace
+    const base=ty+(H-ty)*0.55;
     ctx.strokeStyle='rgba(79,227,255,.18)';ctx.beginPath();ctx.moveTo(0,base);ctx.lineTo(W,base);ctx.stroke();
     ctx.strokeStyle='#4fe3ff';ctx.lineWidth=1.5;ctx.shadowColor='#4fe3ff';ctx.shadowBlur=8;ctx.beginPath();
-    hist.forEach((h,i)=>{const px=W-(hist.length-1-i)*(W/300),py=base-h*60;i?ctx.lineTo(px,py):ctx.moveTo(px,py)});ctx.stroke();ctx.shadowBlur=0;
+    hist.forEach((h,i)=>{const px=W-(hist.length-1-i)*(W/300),py=base-Math.max(-1.2,Math.min(1.2,h))*60;i?ctx.lineTo(px,py):ctx.moveTo(px,py)});ctx.stroke();ctx.shadowBlur=0;
     // rail
     ctx.strokeStyle='#2a3c5c';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(0,ty+20);ctx.lineTo(W,ty+20);ctx.stroke();
     ctx.font='500 11px "JetBrains Mono", monospace';ctx.fillStyle='#7f8da6';
     for(let m=-4;m<=4;m++){const px=cx0+m*sc;if(px<10||px>W-10)continue;ctx.strokeStyle='#2a3c5c';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(px,ty+24);ctx.lineTo(px,ty+32);ctx.stroke();ctx.fillText((m>0?'+':'')+m+'m',px-10,ty+46);}
+    // setpoint marker
+    const rx=cx0+xref*sc;
+    ctx.fillStyle='#4fe3ff';ctx.beginPath();ctx.moveTo(rx,ty+22);ctx.lineTo(rx-7,ty+34);ctx.lineTo(rx+7,ty+34);ctx.closePath();ctx.fill();
+    ctx.fillText('x_ref',rx-16,ty+62);
     // tip trail
-    const px=cx+Math.sin(s.th)*len, py=ty-Math.cos(s.th)*len;
+    const [px,py]=bobXY();
     trail.push([px,py]); if(trail.length>60) trail.shift();
     for(let i=1;i<trail.length;i++){ctx.strokeStyle='rgba(255,107,44,'+(i/trail.length*.55)+')';ctx.lineWidth=i/trail.length*5;ctx.beginPath();ctx.moveTo(trail[i-1][0],trail[i-1][1]);ctx.lineTo(trail[i][0],trail[i][1]);ctx.stroke();}
-    // setpoint ghost
+    // upright guide
     ctx.setLineDash([4,6]);ctx.strokeStyle='rgba(232,238,248,.18)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,ty);ctx.lineTo(cx,ty-len-20);ctx.stroke();ctx.setLineDash([]);
-    // angle arc
     ctx.strokeStyle='#4fe3ff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(cx,ty,48,-Math.PI/2,-Math.PI/2+s.th,s.th<0);ctx.stroke();
-    // rod
+    // drag tether
+    if(drag){ctx.setLineDash([3,5]);ctx.strokeStyle='rgba(255,107,44,.6)';ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(drag.x,drag.y);ctx.stroke();ctx.setLineDash([]);}
+    // rod + bob
     ctx.strokeStyle='#e8eef8';ctx.lineWidth=5;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(cx,ty);ctx.lineTo(px,py);ctx.stroke();
-    // bob
-    ctx.shadowColor='#ff6b2c';ctx.shadowBlur=28;ctx.fillStyle='#ff6b2c';ctx.beginPath();ctx.arc(px,py,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    const r=drag?17:(hover?16:13);
+    ctx.shadowColor='#ff6b2c';ctx.shadowBlur=drag?40:28;ctx.fillStyle='#ff6b2c';ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    if(hover&&!drag){ctx.strokeStyle='rgba(255,107,44,.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(px,py,26,0,Math.PI*2);ctx.stroke();}
     // cart
     ctx.fillStyle='#0f1a2d';ctx.strokeStyle='#e8eef8';ctx.lineWidth=2;ctx.beginPath();ctx.rect(cx-46,ty-8,92,28);ctx.fill();ctx.stroke();
     ctx.fillStyle='#ff6b2c';ctx.beginPath();ctx.arc(cx,ty,5,0,Math.PI*2);ctx.fill();
-    // push flash
-    if(flash>0){ctx.strokeStyle='rgba(255,107,44,'+flash+')';ctx.lineWidth=2;ctx.beginPath();ctx.arc(flashX,py,(1-flash)*80+10,0,Math.PI*2);ctx.stroke();flash-=.04;}
-    // phase portrait inset
-    const pw=Math.min(150,W*0.28),ph=pw*0.62,ox=W-pw-18,oy=18+ (W>760?110:0);
-    if(W>760){
+    // poke ripple
+    if(flash>0){ctx.strokeStyle='rgba(255,107,44,'+flash+')';ctx.lineWidth=2;ctx.beginPath();ctx.arc(flashX,flashY,(1-flash)*80+10,0,Math.PI*2);ctx.stroke();flash-=.04;}
+    if(dropFlash>0){ctx.fillStyle='rgba(255,107,44,'+dropFlash*.12+')';ctx.fillRect(0,0,W,H);ctx.fillStyle='rgba(255,107,44,'+dropFlash+')';ctx.font='700 14px "JetBrains Mono", monospace';ctx.fillText('DROPPED · RESETTING',cx-82,ty-len-40);dropFlash-=.015;}
+    // phase portrait
+    if(wide){
+      const pw=Math.min(150,W*0.28),ph=pw*0.62,ox=W-pw-18,oy=128;
       ctx.strokeStyle='#1c2a42';ctx.lineWidth=1;ctx.strokeRect(ox,oy,pw,ph);
       ctx.beginPath();ctx.moveTo(ox+pw/2,oy);ctx.lineTo(ox+pw/2,oy+ph);ctx.moveTo(ox,oy+ph/2);ctx.lineTo(ox+pw,oy+ph/2);ctx.stroke();
-      ctx.fillStyle='#7f8da6';ctx.fillText('phase θ–ω',ox+6,oy+ph+16);
+      ctx.fillStyle='#7f8da6';ctx.font='500 11px "JetBrains Mono", monospace';ctx.fillText('phase θ–ω',ox+6,oy+ph+16);
+      ctx.save();ctx.beginPath();ctx.rect(ox,oy,pw,ph);ctx.clip();
       ctx.strokeStyle='#ff6b2c';ctx.lineWidth=1.5;ctx.beginPath();
-      phase.forEach((p,i)=>{const X=ox+pw/2+p[0]*pw*1.1,Y=oy+ph/2-p[1]*ph*0.22;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();
+      phase.forEach((p,i)=>{const X=ox+pw/2+p[0]*pw*0.6,Y=oy+ph/2-p[1]*ph*0.12;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.restore();
     }
     const deg=s.th*180/Math.PI;
-    document.getElementById('th').textContent=(deg>=0?'+':'−')+Math.abs(deg).toFixed(2)+'°';
-    document.getElementById('om').textContent=(s.w>=0?'+':'−')+Math.abs(s.w).toFixed(2)+' rad/s';
-    document.getElementById('xx').textContent=(s.x>=0?'+':'−')+Math.abs(s.x).toFixed(2)+' m';
+    $('th').textContent=(deg>=0?'+':'−')+Math.abs(deg).toFixed(2)+'°';
+    $('om').textContent=(s.w>=0?'+':'−')+Math.abs(s.w).toFixed(2)+' rad/s';
+    $('xx').textContent=(s.x>=0?'+':'−')+Math.abs(s.x).toFixed(2)+' m';
+    $('score').textContent=caught+' caught · '+dropped+' dropped';
   }
-  const phase=[];
-  function record(){hist.push(s.th);if(hist.length>300)hist.shift();phase.push([s.th,s.w]);if(phase.length>160)phase.shift();}
-  function settle(){for(let i=0;i<900;i++){step(.004);if(i%3===0)record();}trail.length=0;draw();}
-  function push(clientX){
-    const r=cv.getBoundingClientRect(), {sc,cx0}=geom(), cx=cx0+s.x*sc, x=clientX-r.left;
-    s.w+=(x<cx?1:-1)*(1.0+Math.random()*.4); flash=1; flashX=x;
+
+  function settle(){for(let i=0;i<900;i++){step(.004);if(i%3===0)record();}checkCaught();trail.length=0;draw();}
+
+  /* ---- input ---- */
+  function local(e){const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+  function onBob(p){const [bx,by]=bobXY();return Math.hypot(p.x-bx,p.y-by)<34}
+  function onRail(p){const {ty}=geom();return p.y>ty-14&&p.y<ty+70}
+  function setAngleFrom(p){
+    const {ty}=geom(),cx=cartX();
+    let th=Math.atan2(p.x-cx, ty-p.y);
+    th=Math.max(-0.75,Math.min(0.75,th));
+    const now=performance.now(), dtt=Math.max(.008,(now-drag.t)/1000);
+    drag.w=(th-s.th)/dtt*0.6+drag.w*0.4; drag.t=now;
+    s.th=th; s.w=0;
+  }
+  cv.addEventListener('pointerdown',e=>{
+    const p=local(e); lastUser=performance.now(); watching=true;
+    if(onBob(p)){
+      drag={x:p.x,y:p.y,t:performance.now(),w:0,id:e.pointerId};
+      try{cv.setPointerCapture(e.pointerId)}catch(_){}
+      setAngleFrom(p); cv.style.cursor='grabbing'; e.preventDefault(); return;
+    }
+    if(onRail(p)){
+      const {sc,cx0}=geom();
+      xref=Math.max(xMin(),Math.min(xMax(),(p.x-cx0)/sc));
+      flash=1;flashX=p.x;flashY=geom().ty+20;
+    } else {
+      const [bx]=bobXY(), dist=Math.abs(p.x-bx);
+      const k=Math.max(0.6,Math.min(2.2,0.6+dist/220));
+      s.w+=(p.x<bx?1:-1)*k; flash=1;flashX=p.x;flashY=p.y;
+    }
+    if(reduce) settle();
+  });
+  cv.addEventListener('pointermove',e=>{
+    const p=local(e);
+    if(drag&&e.pointerId===drag.id){drag.x=p.x;drag.y=p.y;setAngleFrom(p);if(reduce)draw();return;}
+    hover=onBob(p);
+    cv.style.cursor=hover?'grab':(onRail(p)?'pointer':'crosshair');
+  });
+  function release(){
+    if(!drag) return;
+    s.w=Math.max(-4,Math.min(4,drag.w)); drag=null; cv.style.cursor='grab';
+    lastUser=performance.now();
     if(reduce) settle();
   }
-  cv.addEventListener('pointerdown',e=>push(e.clientX));
+  cv.addEventListener('pointerup',release);
+  cv.addEventListener('pointercancel',release);
+  cv.addEventListener('pointerleave',()=>{hover=false});
+  // On phones: only block scrolling when the touch starts on the ball.
+  cv.addEventListener('touchstart',e=>{const t=e.touches[0];if(t&&onBob(local(t)))e.preventDefault();},{passive:false});
+  cv.addEventListener('touchmove',e=>{if(drag)e.preventDefault();},{passive:false});
+
+  /* ---- loop ---- */
   let last=performance.now(),idle=0;
   function loop(now){
     const dt=Math.min(.05,(now-last)/1000);last=now;
     for(let i=0;i<12;i++)step(dt/12);
-    idle+=dt; if(idle>4.5){idle=0;s.w+=(Math.random()<.5?-1:1)*(.7+Math.random()*.5);}
+    checkCaught();
+    if(now-lastUser>9000&&!drag){idle+=dt; if(idle>4.5){idle=0;s.w+=(Math.random()<.5?-1:1)*(.7+Math.random()*.5);}} else idle=0;
     record();draw();requestAnimationFrame(loop);
   }
   new ResizeObserver(resize).observe(cv); resize();
