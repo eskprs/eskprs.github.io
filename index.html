@@ -588,27 +588,28 @@ show((location.hash||'').slice(1)||'about',false);
   if(reduce) settle(); else requestAnimationFrame(loop);
 })();
 
-/* ---------- Music: starts on the home page (first tap if the browser blocks autoplay) ---------- */
+/* ---------- Music: autoplay on load; browsers only allow sound after a first tap, so it starts muted and unmutes on the first tap/key ---------- */
 (()=>{
   const song=document.getElementById('song'), btn=document.getElementById('music'), lbl=document.getElementById('musicLbl');
   if(!song||!btn) return;
-  let wanted=true, fade=0;
-  function ui(on){btn.classList.toggle('on',on);btn.setAttribute('aria-pressed',on);lbl.textContent=on?'♪ Tom\'s Little Swing Café':'♪ Play music';}
+  let wanted=true, fade=0, silent=false;
+  function ui(on){btn.classList.toggle('on',on);btn.setAttribute('aria-pressed',on);lbl.textContent=on?(silent?'♪ Tap for sound':'♪ Tom\'s Little Swing Café'):'♪ Play music';}
   function ramp(to,ms,done){clearInterval(fade);const v0=song.volume,t=performance.now();fade=setInterval(()=>{const k=Math.min(1,(performance.now()-t)/ms);try{song.volume=v0+(to-v0)*k}catch(e){} if(k>=1){clearInterval(fade);done&&done();}},40);}
+  function loud(){silent=false;song.muted=false;ui(true);ramp(0.6,1200);}
   function play(){
-    try{song.volume=0}catch(e){}
+    song.muted=false; try{song.volume=0}catch(e){}
     const p=song.play();
-    if(p&&p.then) return p.then(()=>{ui(true);ramp(0.6,1200);return true},()=>false);
-    ui(true);return Promise.resolve(true);
+    if(!p||!p.then){loud();return Promise.resolve(true);}
+    return p.then(()=>{loud();return true},()=>{
+      song.muted=true; try{song.volume=0.6}catch(e){}
+      return song.play().then(()=>{silent=true;ui(true);return false},()=>false);
+    });
   }
   function pause(){ramp(0,400,()=>{song.pause();ui(false);});}
-  btn.addEventListener('click',e=>{e.stopPropagation();if(song.paused){wanted=true;play();}else{wanted=false;pause();}});
-  play().then(ok=>{
-    if(ok) return;
-    const go=e=>{if(e.target&&e.target.closest&&e.target.closest('#music'))return;remove();if(wanted&&song.paused)play();};
-    const remove=()=>['pointerdown','keydown','touchstart'].forEach(t=>document.removeEventListener(t,go,true));
-    ['pointerdown','keydown','touchstart'].forEach(t=>document.addEventListener(t,go,true));
-  });
+  btn.addEventListener('click',e=>{e.stopPropagation();if(song.paused){wanted=true;play();}else if(silent){loud();}else{wanted=false;pause();}});
+  const evs=['pointerdown','keydown','touchstart','click'];
+  const go=e=>{if(e.target&&e.target.closest&&e.target.closest('#music'))return;evs.forEach(t=>document.removeEventListener(t,go,true));if(!wanted)return;if(song.paused)play();else if(silent){try{song.volume=0}catch(x){}loud();}};
+  play().then(ok=>{if(!ok) evs.forEach(t=>document.addEventListener(t,go,true));});
 })();
 </script>
 </body>
