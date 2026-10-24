@@ -1,20 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ff6b2c" stop-opacity=".75"/>
-      <stop offset="1" stop-color="#ff6b2c" stop-opacity="0"/>
-    </radialGradient>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#0f1a2d"/>
       <stop offset="1" stop-color="#060a12"/>
     </linearGradient>
+    <path id="p" fill-rule="evenodd" d="M0 0H13C20 0 24 4.5 24 11C24 17.5 20 22 13 22H8V40H0ZM8 7V15H12.5C14.5 15 16 13.5 16 11C16 8.5 14.5 7 12.5 7Z"/>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#bg)"/>
-  <path d="M8 18V8h10M56 46v10H46" fill="none" stroke="#ff6b2c" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M24 49 L37.5 16" stroke="#e8eef8" stroke-width="4.5" stroke-linecap="round"/>
-  <circle cx="38" cy="15" r="13" fill="url(#glow)"/>
-  <circle cx="38" cy="15" r="6.5" fill="#ff6b2c"/>
-  <rect x="13" y="45" width="22" height="9" rx="2" fill="#0f1a2d" stroke="#e8eef8" stroke-width="2.5"/>
-  <circle cx="24" cy="49" r="2" fill="#ff6b2c"/>
-  <path d="M6 58H44" stroke="#4fe3ff" stroke-width="2" stroke-linecap="round" opacity=".9"/>
+  <use href="#p" transform="translate(6.5 10)" fill="#e8eef8"/>
+  <use href="#p" transform="translate(33.5 10)" fill="#ff6b2c"/>
+  <path d="M9 56H55" stroke="#4fe3ff" stroke-width="2.5" stroke-linecap="round"/>
 </svg>
